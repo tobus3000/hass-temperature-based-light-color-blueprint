@@ -1,0 +1,333 @@
+blueprint:
+  name: Temperature-based light color
+  description: >
+    Changes the color of one or more lights based on a configurable
+    temperature sensor.
+
+    Supports RGB color interpolation and color-temperature (Kelvin)
+    interpolation.
+
+    When "Only update lights that are already on" is enabled, the
+    automation never turns an off light on. When a light is subsequently
+    turned on, its color is synchronized with the current temperature.
+
+    The configured color is also applied to eligible lights when
+    Home Assistant starts.
+  domain: automation
+  author: tobus3000
+  source_url: https://github.com/tobus3000/hass-temperature-based-light-color-blueprint
+  min_version: "2024.10.0"
+
+  input:
+    temperature_sensor:
+      name: Temperature sensor
+      description: >
+        The temperature sensor whose value controls the light color.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    target_lights:
+      name: Lights
+      description: >
+        One or more lights whose color should follow the temperature.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: light
+
+    color_mode:
+      name: Color mode
+      description: >
+        Choose between RGB color interpolation and color-temperature
+        interpolation.
+      default: rgb
+      selector:
+        select:
+          options:
+            - label: RGB color
+              value: rgb
+            - label: Color temperature
+              value: color_temperature
+
+    min_temperature:
+      name: Minimum temperature
+      description: >
+        At or below this temperature, the minimum configured color is used.
+      default: 0
+      selector:
+        number:
+          min: -50
+          max: 100
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+
+    max_temperature:
+      name: Maximum temperature
+      description: >
+        At or above this temperature, the maximum configured color is used.
+      default: 30
+      selector:
+        number:
+          min: -50
+          max: 100
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+
+    low_temperature_rgb:
+      name: Color at minimum temperature
+      description: >
+        RGB color used at or below the minimum temperature.
+      default: [0, 100, 255]
+      selector:
+        color_rgb:
+
+    high_temperature_rgb:
+      name: Color at maximum temperature
+      description: >
+        RGB color used at or above the maximum temperature.
+      default: [255, 0, 0]
+      selector:
+        color_rgb:
+
+    low_temperature_kelvin:
+      name: Color temperature at minimum temperature
+      description: >
+        Kelvin value used at or below the minimum temperature.
+      default: 6500
+      selector:
+        color_temp:
+          unit: kelvin
+          min: 2000
+          max: 6500
+
+    high_temperature_kelvin:
+      name: Color temperature at maximum temperature
+      description: >
+        Kelvin value used at or above the maximum temperature.
+      default: 2700
+      selector:
+        color_temp:
+          unit: kelvin
+          min: 2000
+          max: 6500
+
+    transition:
+      name: Transition
+      description: >
+        Duration of the color transition.
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 0.5
+          unit_of_measurement: seconds
+          mode: box
+
+    min_temperature_change:
+      name: Minimum temperature change
+      description: >
+        Ignore temperature changes smaller than this amount.
+        Set to 0 to react to every sensor state change.
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+
+    only_update_lights_that_are_on:
+      name: Only update lights that are already on
+      description: >
+        When enabled, off lights are never turned on by this automation.
+        When a light is subsequently turned on, its color is synchronized
+        with the current temperature.
+      default: true
+      selector:
+        boolean:
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  temperature_sensor: !input temperature_sensor
+  target_lights: !input target_lights
+  color_mode: !input color_mode
+
+  min_temperature: !input min_temperature
+  max_temperature: !input max_temperature
+
+  low_temperature_rgb: !input low_temperature_rgb
+  high_temperature_rgb: !input high_temperature_rgb
+
+  low_temperature_kelvin: !input low_temperature_kelvin
+  high_temperature_kelvin: !input high_temperature_kelvin
+
+  transition: !input transition
+  min_temperature_change: !input min_temperature_change
+  only_update_lights_that_are_on: !input only_update_lights_that_are_on
+
+  temperature: "{{ states(temperature_sensor) | float(0) }}"
+
+  temperature_ratio: >
+    {% set t = states(temperature_sensor) | float(0) %}
+    {% if t <= min_temperature %}
+      0
+    {% elif t >= max_temperature %}
+      1
+    {% else %}
+      {{ (t - min_temperature) / (max_temperature - min_temperature) }}
+    {% endif %}
+
+trigger:
+  - trigger: state
+    entity_id: !input temperature_sensor
+    id: temperature_changed
+
+  - trigger: state
+    entity_id: !input target_lights
+    to: "on"
+    id: light_turned_on
+
+  - trigger: homeassistant
+    event: start
+    id: home_assistant_started
+
+condition:
+  - condition: template
+    value_template: >
+      {{ states(temperature_sensor) not in
+         ['unknown', 'unavailable', 'none', ''] }}
+
+  - condition: template
+    value_template: >
+      {{ max_temperature > min_temperature }}
+
+  - condition: template
+    value_template: >
+      {% if trigger.id != 'temperature_changed' %}
+        true
+      {% elif trigger.from_state is none %}
+        true
+      {% elif trigger.from_state.state in ['unknown', 'unavailable', 'none', ''] %}
+        true
+      {% else %}
+        {{
+          (
+            states(temperature_sensor) | float(0)
+            - trigger.from_state.state | float(0)
+          ) | abs >= min_temperature_change
+        }}
+      {% endif %}
+
+action:
+  - variables:
+      lights_to_update: >
+        {% if trigger.id == 'light_turned_on' %}
+          {{ [trigger.entity_id] }}
+        {% elif only_update_lights_that_are_on %}
+          {{
+            expand(target_lights)
+            | selectattr('state', 'eq', 'on')
+            | map(attribute='entity_id')
+            | list
+          }}
+        {% else %}
+          {{ target_lights }}
+        {% endif %}
+
+  - condition: template
+    value_template: >
+      {{ lights_to_update | count > 0 }}
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ color_mode == 'rgb' }}"
+        sequence:
+          - variables:
+              red: >
+                {{
+                  (
+                    low_temperature_rgb[0]
+                    + (
+                      temperature_ratio | float(0)
+                      * (
+                        high_temperature_rgb[0]
+                        - low_temperature_rgb[0]
+                      )
+                    )
+                  ) | round(0) | int
+                }}
+
+              green: >
+                {{
+                  (
+                    low_temperature_rgb[1]
+                    + (
+                      temperature_ratio | float(0)
+                      * (
+                        high_temperature_rgb[1]
+                        - low_temperature_rgb[1]
+                      )
+                    )
+                  ) | round(0) | int
+                }}
+
+              blue: >
+                {{
+                  (
+                    low_temperature_rgb[2]
+                    + (
+                      temperature_ratio | float(0)
+                      * (
+                        high_temperature_rgb[2]
+                        - low_temperature_rgb[2]
+                      )
+                    )
+                  ) | round(0) | int
+                }}
+
+          - action: light.turn_on
+            target:
+              entity_id: "{{ lights_to_update }}"
+            data:
+              rgb_color:
+                - "{{ red }}"
+                - "{{ green }}"
+                - "{{ blue }}"
+              transition: "{{ transition }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ color_mode == 'color_temperature' }}"
+        sequence:
+          - variables:
+              color_temperature_kelvin: >
+                {{
+                  (
+                    low_temperature_kelvin
+                    + (
+                      temperature_ratio | float(0)
+                      * (
+                        high_temperature_kelvin
+                        - low_temperature_kelvin
+                      )
+                    )
+                  ) | round(0) | int
+                }}
+
+          - action: light.turn_on
+            target:
+              entity_id: "{{ lights_to_update }}"
+            data:
+              color_temp_kelvin: "{{ color_temperature_kelvin }}"
+              transition: "{{ transition }}"
