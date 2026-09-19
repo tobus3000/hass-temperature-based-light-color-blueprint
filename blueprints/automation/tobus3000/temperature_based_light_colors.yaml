@@ -16,7 +16,8 @@ blueprint:
   domain: automation
   author: tobus3000
   source_url: https://github.com/tobus3000/hass-temperature-based-light-color-blueprint
-  min_version: "2024.10.0"
+  homeassistant:
+    min_version: "2024.10.0"
 
   input:
     temperature_sensor:
