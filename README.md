@@ -36,7 +36,7 @@ The blueprint calculates the intermediate color automatically.
 
 Use the following URL to import the blueprint:
 
-https://raw.githubusercontent.com/tobus3000/hass-temperature-based-light-color-blueprint/main/blueprints/automation/tobus3000/temperature_based_light_color.yaml
+<https://raw.githubusercontent.com/tobus3000/hass-temperature-based-light-color-blueprint/main/blueprints/automation/tobus3000/temperature_based_light_color.yaml>
 
 Alternatively, in Home Assistant:
 
@@ -316,4 +316,4 @@ See [LICENSE](LICENSE) for the license applicable to this project.
 
 Source code and issue tracking:
 
-https://github.com/tobus3000/hass-temperature-based-light-color-blueprint
+<https://github.com/tobus3000/hass-temperature-based-light-color-blueprint>
