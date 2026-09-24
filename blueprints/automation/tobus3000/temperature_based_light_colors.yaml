@@ -4,8 +4,19 @@ blueprint:
     Changes the color of one or more lights based on a configurable
     temperature sensor.
 
-    Supports RGB color interpolation and color-temperature (Kelvin)
-    interpolation.
+    The color changes through three configurable temperature points:
+    cold, normal, and hot.
+
+    The transition is split into two phases:
+    cold → normal and normal → hot.
+
+    For RGB mode, the colors are interpolated between the three
+    configured RGB colors. This allows colors such as blue → green →
+    red, with the intermediate transition naturally passing through
+    cyan, yellow, orange, and other intermediate colors.
+
+    For color-temperature mode, the Kelvin value is interpolated
+    through the same three temperature points.
 
     When "Only update lights that are already on" is enabled, the
     automation never turns an off light on. When a light is subsequently
@@ -57,8 +68,23 @@ blueprint:
     min_temperature:
       name: Minimum temperature
       description: >
-        At or below this temperature, the minimum configured color is used.
+        At or below this temperature, the cold color is used.
+        Must be lower than the normal and maximum temperatures.
       default: 0
+      selector:
+        number:
+          min: -50
+          max: 100
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+
+    normal_temperature:
+      name: Normal temperature
+      description: >
+        The temperature at which the normal color is used.
+        Must be between the minimum and maximum temperatures.
+      default: 20
       selector:
         number:
           min: -50
@@ -70,7 +96,8 @@ blueprint:
     max_temperature:
       name: Maximum temperature
       description: >
-        At or above this temperature, the maximum configured color is used.
+        At or above this temperature, the hot color is used.
+        Must be higher than the normal and minimum temperatures.
       default: 30
       selector:
         number:
@@ -80,24 +107,32 @@ blueprint:
           unit_of_measurement: "°C"
           mode: box
 
-    low_temperature_rgb:
-      name: Color at minimum temperature
+    cold_temperature_rgb:
+      name: Cold color
       description: >
         RGB color used at or below the minimum temperature.
       default: [0, 100, 255]
       selector:
         color_rgb:
 
-    high_temperature_rgb:
-      name: Color at maximum temperature
+    normal_temperature_rgb:
+      name: Normal color
+      description: >
+        RGB color used at the normal temperature.
+      default: [0, 255, 0]
+      selector:
+        color_rgb:
+
+    hot_temperature_rgb:
+      name: Hot color
       description: >
         RGB color used at or above the maximum temperature.
       default: [255, 0, 0]
       selector:
         color_rgb:
 
-    low_temperature_kelvin:
-      name: Color temperature at minimum temperature
+    cold_temperature_kelvin:
+      name: Cold color temperature
       description: >
         Kelvin value used at or below the minimum temperature.
       default: 6500
@@ -107,8 +142,19 @@ blueprint:
           min: 2000
           max: 6500
 
-    high_temperature_kelvin:
-      name: Color temperature at maximum temperature
+    normal_temperature_kelvin:
+      name: Normal color temperature
+      description: >
+        Kelvin value used at the normal temperature.
+      default: 4000
+      selector:
+        color_temp:
+          unit: kelvin
+          min: 2000
+          max: 6500
+
+    hot_temperature_kelvin:
+      name: Hot color temperature
       description: >
         Kelvin value used at or above the maximum temperature.
       default: 2700
@@ -164,13 +210,16 @@ variables:
   color_mode: !input color_mode
 
   min_temperature: !input min_temperature
+  normal_temperature: !input normal_temperature
   max_temperature: !input max_temperature
 
-  low_temperature_rgb: !input low_temperature_rgb
-  high_temperature_rgb: !input high_temperature_rgb
+  cold_temperature_rgb: !input cold_temperature_rgb
+  normal_temperature_rgb: !input normal_temperature_rgb
+  hot_temperature_rgb: !input hot_temperature_rgb
 
-  low_temperature_kelvin: !input low_temperature_kelvin
-  high_temperature_kelvin: !input high_temperature_kelvin
+  cold_temperature_kelvin: !input cold_temperature_kelvin
+  normal_temperature_kelvin: !input normal_temperature_kelvin
+  hot_temperature_kelvin: !input hot_temperature_kelvin
 
   transition: !input transition
   min_temperature_change: !input min_temperature_change
@@ -180,12 +229,24 @@ variables:
 
   temperature_ratio: >
     {% set t = states(temperature_sensor) | float(0) %}
+
     {% if t <= min_temperature %}
       0
-    {% elif t >= max_temperature %}
-      1
+    {% elif t < normal_temperature %}
+      {{ (t - min_temperature) / (normal_temperature - min_temperature) }}
+    {% elif t < max_temperature %}
+      {{ (t - normal_temperature) / (max_temperature - normal_temperature) }}
     {% else %}
-      {{ (t - min_temperature) / (max_temperature - min_temperature) }}
+      1
+    {% endif %}
+
+  temperature_phase: >
+    {% set t = states(temperature_sensor) | float(0) %}
+
+    {% if t <= normal_temperature %}
+      cold_to_normal
+    {% else %}
+      normal_to_hot
     {% endif %}
 
 trigger:
@@ -210,7 +271,10 @@ condition:
 
   - condition: template
     value_template: >
-      {{ max_temperature > min_temperature }}
+      {{
+        min_temperature < normal_temperature
+        and normal_temperature < max_temperature
+      }}
 
   - condition: template
     value_template: >
@@ -256,46 +320,127 @@ action:
         sequence:
           - variables:
               red: >
-                {{
-                  (
-                    low_temperature_rgb[0]
-                    + (
-                      temperature_ratio | float(0)
-                      * (
-                        high_temperature_rgb[0]
-                        - low_temperature_rgb[0]
+                {% set t = temperature | float(0) %}
+
+                {% if t <= min_temperature %}
+                  {{ cold_temperature_rgb[0] | int }}
+                {% elif t < normal_temperature %}
+                  {{
+                    (
+                      cold_temperature_rgb[0]
+                      + (
+                        (
+                          (t - min_temperature)
+                          / (normal_temperature - min_temperature)
+                        )
+                        * (
+                          normal_temperature_rgb[0]
+                          - cold_temperature_rgb[0]
+                        )
                       )
-                    )
-                  ) | round(0) | int
-                }}
+                    ) | round(0) | int
+                  }}
+                {% elif t < max_temperature %}
+                  {{
+                    (
+                      normal_temperature_rgb[0]
+                      + (
+                        (
+                          (t - normal_temperature)
+                          / (max_temperature - normal_temperature)
+                        )
+                        * (
+                          hot_temperature_rgb[0]
+                          - normal_temperature_rgb[0]
+                        )
+                      )
+                    ) | round(0) | int
+                  }}
+                {% else %}
+                  {{ hot_temperature_rgb[0] | int }}
+                {% endif %}
 
               green: >
-                {{
-                  (
-                    low_temperature_rgb[1]
-                    + (
-                      temperature_ratio | float(0)
-                      * (
-                        high_temperature_rgb[1]
-                        - low_temperature_rgb[1]
+                {% set t = temperature | float(0) %}
+
+                {% if t <= min_temperature %}
+                  {{ cold_temperature_rgb[1] | int }}
+                {% elif t < normal_temperature %}
+                  {{
+                    (
+                      cold_temperature_rgb[1]
+                      + (
+                        (
+                          (t - min_temperature)
+                          / (normal_temperature - min_temperature)
+                        )
+                        * (
+                          normal_temperature_rgb[1]
+                          - cold_temperature_rgb[1]
+                        )
                       )
-                    )
-                  ) | round(0) | int
-                }}
+                    ) | round(0) | int
+                  }}
+                {% elif t < max_temperature %}
+                  {{
+                    (
+                      normal_temperature_rgb[1]
+                      + (
+                        (
+                          (t - normal_temperature)
+                          / (max_temperature - normal_temperature)
+                        )
+                        * (
+                          hot_temperature_rgb[1]
+                          - normal_temperature_rgb[1]
+                        )
+                      )
+                    ) | round(0) | int
+                  }}
+                {% else %}
+                  {{ hot_temperature_rgb[1] | int }}
+                {% endif %}
 
               blue: >
-                {{
-                  (
-                    low_temperature_rgb[2]
-                    + (
-                      temperature_ratio | float(0)
-                      * (
-                        high_temperature_rgb[2]
-                        - low_temperature_rgb[2]
+                {% set t = temperature | float(0) %}
+
+                {% if t <= min_temperature %}
+                  {{ cold_temperature_rgb[2] | int }}
+                {% elif t < normal_temperature %}
+                  {{
+                    (
+                      cold_temperature_rgb[2]
+                      + (
+                        (
+                          (t - min_temperature)
+                          / (normal_temperature - min_temperature)
+                        )
+                        * (
+                          normal_temperature_rgb[2]
+                          - cold_temperature_rgb[2]
+                        )
                       )
-                    )
-                  ) | round(0) | int
-                }}
+                    ) | round(0) | int
+                  }}
+                {% elif t < max_temperature %}
+                  {{
+                    (
+                      normal_temperature_rgb[2]
+                      + (
+                        (
+                          (t - normal_temperature)
+                          / (max_temperature - normal_temperature)
+                        )
+                        * (
+                          hot_temperature_rgb[2]
+                          - normal_temperature_rgb[2]
+                        )
+                      )
+                    ) | round(0) | int
+                  }}
+                {% else %}
+                  {{ hot_temperature_rgb[2] | int }}
+                {% endif %}
 
           - action: light.turn_on
             target:
@@ -313,18 +458,45 @@ action:
         sequence:
           - variables:
               color_temperature_kelvin: >
-                {{
-                  (
-                    low_temperature_kelvin
-                    + (
-                      temperature_ratio | float(0)
-                      * (
-                        high_temperature_kelvin
-                        - low_temperature_kelvin
+                {% set t = temperature | float(0) %}
+
+                {% if t <= min_temperature %}
+                  {{ cold_temperature_kelvin | int }}
+                {% elif t < normal_temperature %}
+                  {{
+                    (
+                      cold_temperature_kelvin
+                      + (
+                        (
+                          (t - min_temperature)
+                          / (normal_temperature - min_temperature)
+                        )
+                        * (
+                          normal_temperature_kelvin
+                          - cold_temperature_kelvin
+                        )
                       )
-                    )
-                  ) | round(0) | int
-                }}
+                    ) | round(0) | int
+                  }}
+                {% elif t < max_temperature %}
+                  {{
+                    (
+                      normal_temperature_kelvin
+                      + (
+                        (
+                          (t - normal_temperature)
+                          / (max_temperature - normal_temperature)
+                        )
+                        * (
+                          hot_temperature_kelvin
+                          - normal_temperature_kelvin
+                        )
+                      )
+                    ) | round(0) | int
+                  }}
+                {% else %}
+                  {{ hot_temperature_kelvin | int }}
+                {% endif %}
 
           - action: light.turn_on
             target:

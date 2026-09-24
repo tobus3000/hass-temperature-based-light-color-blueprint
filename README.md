@@ -30,6 +30,24 @@ The blueprint calculates the intermediate color automatically.
 * 🛡️ Handles unavailable and unknown temperature sensors
 * 📈 Temperatures outside the configured range are clamped to the configured endpoint colors
 
+## How the temperature curve works
+
+Configurable color values exist for: Cold, Normal and Hot
+
+With the defaults:
+
+| Temperature | RGB behavior         |
+| ----------- | -------------------- |
+| ≤ 0°C       | Cold color: blue     |
+| 10°C        | halfway blue → green |
+| 20°C        | Normal color: green  |
+| 22°C        | green → yellow       |
+| 25°C        | yellow → orange      |
+| 28°C        | orange → red         |
+| ≥ 30°C      | Hot color: red       |
+
+The intermediate colors are calculated mathematically rather than hard-coded, so the user can choose any three colors and still get a two-stage gradient.
+
 ## Installation
 
 ### Import directly into Home Assistant
